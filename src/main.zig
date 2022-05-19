@@ -111,18 +111,47 @@ const Graph = struct {
     }
 
     pub fn strongly_connected_components_alloc(self: Self, alloc: std.mem.Allocator) !Componentization {
-        var po = try self.post_order();
-        defer alloc.free(po);
+        var postorder = try self.post_order();
+        defer alloc.free(postorder);
 
-        _ = po;
-        // std.log.err("Graph's reverse post-order: {any}", .{po});
+        var trans = try self.transpose();
+        defer trans.deinit();
 
-        // var component_roots = try
+        var roots = try alloc.alloc(?usize, self.nodes.len);
+        for (roots) |*r| {
+            r.* = null;
+        }
 
-        // var i = po.items.len;
-        // while (i>0): (i -= 1) {
-        //     var u = po.items[i-1];
-        // }
+        const AssignFrame = struct {
+            node: usize,
+            root: usize,
+        };
+        var stack = std.ArrayList(AssignFrame).init(alloc);
+        defer stack.deinit();
+
+        var i = postorder.len;
+        while (i > 0) : (i -= 1) {
+            var u = postorder[i - 1];
+
+            if (roots[u] != null) {
+                continue;
+            }
+
+            try stack.append(AssignFrame{
+                .node = u,
+                .root = u,
+            });
+            while (stack.popOrNull()) |frame| {
+                if (roots[frame.node] == null) {
+                    roots[frame.node] = frame.root;
+                    for (trans.out_neighbors(frame.node)) |n| {
+                        try stack.append(AssignFrame{ .node = n, .root = frame.root });
+                    }
+                }
+            }
+        }
+
+        std.log.err("component_roots: {any}", .{roots});
 
         return Componentization{
             .components = &[_][]const usize{},
