@@ -32,6 +32,11 @@ const Graph = struct {
         };
     }
 
+    pub fn deinit(self: *Self) void {
+        self.alloc.free(self.nodes);
+        self.alloc.free(self.edges);
+    }
+
     pub fn out_neighbors(self: Self, n: usize) []const usize {
         return self.out_neighbors_node(self.nodes[n]);
     }
@@ -89,27 +94,52 @@ const Graph = struct {
 
     pub const Componentization = struct {
         components: []const []const usize,
-        dag_nodes: []const usize,
         alloc: std.mem.Allocator,
 
-        pub fn deinit(self: @This()) !void {
+        pub fn deinit(self: @This()) void {
             for (self.components) |c| {
                 self.alloc.free(c);
             }
             self.alloc.free(self.components);
-            self.alloc.free(self.dag_nodes);
         }
     };
 
-    pub fn post_order(self: Self) !std.ArrayList(usize) {
-        return self.post_order_alloc(self.alloc);
+    // User should call deinit on the result
+    // https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm
+    pub fn strongly_connected_components(self: Self) !Componentization {
+        return self.strongly_connected_components_alloc(self.alloc);
+    }
+
+    pub fn strongly_connected_components_alloc(self: Self, alloc: std.mem.Allocator) !Componentization {
+        var po = try self.post_order();
+        defer alloc.free(po);
+
+        _ = po;
+        // std.log.err("Graph's reverse post-order: {any}", .{po});
+
+        // var component_roots = try
+
+        // var i = po.items.len;
+        // while (i>0): (i -= 1) {
+        //     var u = po.items[i-1];
+        // }
+
+        return Componentization{
+            .components = &[_][]const usize{},
+            .alloc = alloc,
+        };
     }
 
     // Returns a post-order traversal using node 0 as the root
-    // Caller owns the returned list
+    // Caller owns the returned slice, and should free it using self.alloc
     // https://eli.thegreenplace.net/2015/directed-graph-traversal-orderings-and-applications-to-data-flow-analysis/
     // https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm
-    pub fn post_order_alloc(self: Self, alloc: std.mem.Allocator) !std.ArrayList(usize) {
+    pub fn post_order(self: Self) ![]const usize {
+        return self.post_order_alloc(self.alloc);
+    }
+
+    // Caller owns the returned slice, and should free it using the same alloc
+    pub fn post_order_alloc(self: Self, alloc: std.mem.Allocator) ![]const usize {
         // Whether we've visited a given node yet while constructing the post-order
         var visited = try alloc.alloc(bool, self.nodes.len);
         defer alloc.free(visited);
@@ -163,31 +193,7 @@ const Graph = struct {
         }
         // We've now visited each node, and the post-order list is fully populated!
 
-        // Owned slice shenanigans in order to free unused capacity. Would be nice if
-        // there was just a standard method for this. We could of course just return the
-        // slice, but since the caller will have to free it using the proper allocator,
-        // I prefer to just hand them the ArrayList with the bundled allocator so they
-        // can just call .deinit() to free.
-        return std.ArrayList(usize).fromOwnedSlice(alloc, result.toOwnedSlice());
-    }
-
-    // User should call deinit on the result
-    // https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm
-    pub fn strongly_connected_components_alloc(self: Self, alloc: std.mem.Allocator) !Componentization {
-        var po = try self.post_order();
-        defer po.deinit();
-
-        std.log.err("Graph's reverse post-order: {any}", .{po.items});
-
-        return Componentization{
-            .components = &[_][]const usize{},
-            .dag_nodes = &[_]usize{},
-            .alloc = alloc,
-        };
-    }
-
-    pub fn strongly_connected_components(self: Self) !Componentization {
-        return self.strongly_connected_components_alloc(self.alloc);
+        return result.toOwnedSlice();
     }
 };
 
@@ -202,7 +208,142 @@ pub fn main() anyerror!void {
         &[_]usize{1},
     }, alloc);
     std.log.info("I made this graph: {any}", .{g});
-    var t = try g.transpose();
-    std.log.info("And its transpose: {any}", .{t});
-    _ = try g.strongly_connected_components();
+
+    std.log.info("It's post-order is: {any}", .{g.post_order()});
+
+    std.log.info("Its transpose is: {any}", .{g.transpose()});
 }
+
+test "Kosaraju algo for SCCs" {
+    const t = std.testing;
+    const alloc = t.allocator;
+
+    //     0   ->   3  ->  4
+    //  ↗️   ↘️
+    // 2  <-  1
+    var g = try Graph.create(&[_][]const usize{
+        &[_]usize{ 2, 3 },
+        &[_]usize{0},
+        &[_]usize{1},
+        &[_]usize{4},
+        &[_]usize{},
+    }, alloc);
+    defer g.deinit();
+    var scc = try g.strongly_connected_components();
+    defer scc.deinit();
+
+    try t.expectEqual(scc.components.len, 1);
+    try t.expectEqualSlices(usize, scc.components[0], &[_]usize{ 0, 1, 2 });
+
+    // 0 -> 1 -> 2 -> 3
+    g.deinit();
+    scc.deinit();
+    g = try Graph.create(&[_][]const usize{
+        &[_]usize{1},
+        &[_]usize{2},
+        &[_]usize{3},
+        &[_]usize{},
+    }, alloc);
+    scc = try g.strongly_connected_components();
+
+    try t.expectEqual(scc.components.len, 0);
+}
+
+// Test cases from:
+// https://www.geeksforgeeks.org/tarjan-algorithm-find-strongly-connected-components/
+//
+//
+//
+//
+//    let g1 = new Graph(5);
+//
+//    g1.addEdge(1, 0);
+//    g1.addEdge(0, 2);
+//    g1.addEdge(2, 1);
+//    g1.addEdge(0, 3);
+//    g1.addEdge(3, 4);
+//    document.write("SSC in first graph <br>");
+//    g1.SCC();
+//
+//    let g2 = new Graph(4);
+//    g2.addEdge(0, 1);
+//    g2.addEdge(1, 2);
+//    g2.addEdge(2, 3);
+//    document.write("\nSSC in second graph<br> ");
+//    g2.SCC();
+//
+//    let g3 = new Graph(7);
+//    g3.addEdge(0, 1);
+//    g3.addEdge(1, 2);
+//    g3.addEdge(2, 0);
+//    g3.addEdge(1, 3);
+//    g3.addEdge(1, 4);
+//    g3.addEdge(1, 6);
+//    g3.addEdge(3, 5);
+//    g3.addEdge(4, 5);
+//    document.write("\nSSC in third graph <br>");
+//    g3.SCC();
+//
+//    let g4 = new Graph(11);
+//    g4.addEdge(0, 1);
+//    g4.addEdge(0, 3);
+//    g4.addEdge(1, 2);
+//    g4.addEdge(1, 4);
+//    g4.addEdge(2, 0);
+//    g4.addEdge(2, 6);
+//    g4.addEdge(3, 2);
+//    g4.addEdge(4, 5);
+//    g4.addEdge(4, 6);
+//    g4.addEdge(5, 6);
+//    g4.addEdge(5, 7);
+//    g4.addEdge(5, 8);
+//    g4.addEdge(5, 9);
+//    g4.addEdge(6, 4);
+//    g4.addEdge(7, 9);
+//    g4.addEdge(8, 9);
+//    g4.addEdge(9, 8);
+//    document.write("\nSSC in fourth graph<br> ");
+//    g4.SCC();
+//
+//    let g5 = new Graph (5);
+//    g5.addEdge(0, 1);
+//    g5.addEdge(1, 2);
+//    g5.addEdge(2, 3);
+//    g5.addEdge(2, 4);
+//    g5.addEdge(3, 0);
+//    g5.addEdge(4, 2);
+//    document.write("\nSSC in fifth graph <br>");
+//    g5.SCC();
+//
+//    // This code is contributed by avanitrachhadiya2155
+//
+//    </script>
+//    Output:
+//
+//    SCCs in first graph
+//    4
+//    3
+//    1 2 0
+//
+//    SCCs in second graph
+//    3
+//    2
+//    1
+//    0
+//
+//    SCCs in third graph
+//    5
+//    3
+//    4
+//    6
+//    2 1 0
+//
+//    SCCs in fourth graph
+//    8 9
+//    7
+//    5 4 6
+//    3 2 1 0
+//    10
+//
+//    SCCs in fifth graph
+//    4 3 2 1 0
