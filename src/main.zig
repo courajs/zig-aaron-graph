@@ -129,9 +129,9 @@ const Graph = struct {
         var stack = std.ArrayList(AssignFrame).init(alloc);
         defer stack.deinit();
 
-        var i = postorder.len;
-        while (i > 0) : (i -= 1) {
-            var u = postorder[i - 1];
+        var i_plus = postorder.len;
+        while (i_plus > 0) : (i_plus -= 1) {
+            var u = postorder[i_plus - 1];
 
             if (roots[u] != null) {
                 continue;
@@ -151,10 +151,27 @@ const Graph = struct {
             }
         }
 
+        var components = std.AutoHashMap(usize, std.ArrayList(usize)).init(alloc);
+        defer components.deinit();
+        for (roots) |r, i| {
+            if (r.? != i) {
+                var entry = try components.getOrPutValue(r.?, std.ArrayList(usize).init(alloc));
+                try entry.value_ptr.append(i);
+            }
+        }
+
+        var result_components = std.ArrayList([]const usize).init(alloc);
+
+        var it = components.iterator();
+        while (it.next()) |entry| {
+            try entry.value_ptr.append(entry.key_ptr.*);
+            try result_components.append(entry.value_ptr.toOwnedSlice());
+        }
+
         std.log.err("component_roots: {any}", .{roots});
 
         return Componentization{
-            .components = &[_][]const usize{},
+            .components = result_components.toOwnedSlice(),
             .alloc = alloc,
         };
     }
@@ -262,6 +279,7 @@ test "Kosaraju algo for SCCs" {
     defer scc.deinit();
 
     try t.expectEqual(scc.components.len, 1);
+    std.log.err("scc: {any}", .{scc});
     try t.expectEqualSlices(usize, scc.components[0], &[_]usize{ 0, 1, 2 });
 
     // 0 -> 1 -> 2 -> 3
