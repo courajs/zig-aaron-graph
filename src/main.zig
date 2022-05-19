@@ -32,7 +32,10 @@ const Graph = struct {
         };
     }
 
-    pub fn out_neighbors(self: Self, n: Node) []const usize {
+    pub fn out_neighbors(self: Self, n: usize) []const usize {
+        return self.out_neighbors_node(self.nodes[n]);
+    }
+    pub fn out_neighbors_node(self: Self, n: Node) []const usize {
         return self.edges[n.start .. n.start + n.len];
     }
 
@@ -52,7 +55,7 @@ const Graph = struct {
         var transposed_edges = try std.ArrayList(FullEdge).initCapacity(alloc, self.edges.len);
         defer transposed_edges.deinit();
         for (self.nodes) |n, from| {
-            for (self.out_neighbors(n)) |to| {
+            for (self.out_neighbors_node(n)) |to| {
                 transposed_edges.appendAssumeCapacity(FullEdge{ .from = to, .to = from });
             }
         }
@@ -89,9 +92,7 @@ const Graph = struct {
         dag_nodes: []const usize,
         alloc: std.mem.Allocator,
 
-        const Self = @This();
-
-        pub fn deinit(self: Self) !void {
+        pub fn deinit(self: @This()) !void {
             for (self.components) |c| {
                 self.alloc.free(c);
             }
@@ -102,35 +103,69 @@ const Graph = struct {
 
     // User should call deinit on the result
     // https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm
-    pub fn strongly_connected_components_alloc(self: Self, alloc: std.mem.allocator) !Componentization {
+    // https://eli.thegreenplace.net/2015/directed-graph-traversal-orderings-and-applications-to-data-flow-analysis/
+    pub fn strongly_connected_components_alloc(self: Self, alloc: std.mem.Allocator) !Componentization {
         // Whether we've visited a given node yet while constructing the post-order
         var visited = try alloc.alloc(bool, self.nodes.len);
         defer alloc.free(visited);
         std.mem.set(bool, visited, false);
 
         // We're supposed to prepend, but instead we'll append and then iterate in reverse.
-        var reverse_post_order = std.ArrayList(usize).initCapacity(self.nodes.len);
+        var reverse_post_order = try std.ArrayList(usize).initCapacity(alloc, self.nodes.len);
+        defer reverse_post_order.deinit();
 
+        const DFSFrame = struct {
+            node: usize,
+            next_out_index: usize,
+        };
         // Mark a node visited when we first see it, then add to the post-order once we've
         // visited all children
-        var stack = std.ArrayList(usize).init(alloc);
+        var stack = std.ArrayList(DFSFrame).init(alloc);
+        defer stack.deinit();
         var i: usize = 0;
         // Since there are likely to be parts of the graph that are completely unconnected
         // to each other, we do have to check every node at the top level
-        while (i < self.nodes.len): (i += 1) {
+        while (i < self.nodes.len) : (i += 1) {
             // Whenever we find a new unvisited "root", we visit all its out-neighbors recursively
-            if (!visited[i]) {
-                stack.append(i);
-                while (stack.items.len > 0) {
-                    var n = stack.items[stack.items.len-1];
-
-                    visited[n] = true;
-
-                }
-                visited[i] = true;
-                stack.appendSlice(self.out_neighbors(self.nodes[i]));
+            if (visited[i]) {
+                continue;
             }
+
+            visited[i] = true;
+            try stack.append(DFSFrame{ .node = i, .next_out_index = 0 });
+
+            while (stack.items.len > 0) {
+                var here = &stack.items[stack.items.len - 1];
+                // Check remaining out-neighbors of the current stack item.
+                for (self.out_neighbors(here.node)[here.next_out_index..]) |out, inc| {
+                    // this out-neighbor has been visited already via some other path
+                    if (visited[out]) {
+                        continue;
+                    }
+                    // otherwise, this is a new node to visit.
+                    visited[out] = true;
+                    here.next_out_index += inc + 1;
+                    try stack.append(DFSFrame{ .node = out, .next_out_index = 0 });
+                    // having set up the proper stack/visit state, we return to the main stack processing loop
+                    break;
+                } else {
+                    // else means we've iterated off the end without breaking - this means all out-neighbors have
+                    // been visited. It's time to add this node to the post-order, and step back up the stack.
+                    try reverse_post_order.append(here.node);
+                    _ = stack.pop();
+                }
+            }
+            // We've finished recursively visiting everything reachable from this root.
+            // Continue searching for an unvisited root
         }
+        // We've now visited each node, and the post-order list is fully populated.
+        std.log.err("Graph's reverse post-order: {any}", .{reverse_post_order.items});
+
+        return Componentization{
+            .components = &[_][]const usize{},
+            .dag_nodes = &[_]usize{},
+            .alloc = alloc,
+        };
     }
 
     pub fn strongly_connected_components(self: Self) !Componentization {
@@ -151,4 +186,5 @@ pub fn main() anyerror!void {
     std.log.info("I made this graph: {any}", .{g});
     var t = try g.transpose();
     std.log.info("And its transpose: {any}", .{t});
+    _ = try g.strongly_connected_components();
 }
