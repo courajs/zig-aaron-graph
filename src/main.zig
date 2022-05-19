@@ -83,6 +83,59 @@ const Graph = struct {
 
         return Self{ .nodes = nodes.toOwnedSlice(), .edges = edges, .alloc = alloc };
     }
+
+    pub const Componentization = struct {
+        components: []const []const usize,
+        dag_nodes: []const usize,
+        alloc: std.mem.Allocator,
+
+        const Self = @This();
+
+        pub fn deinit(self: Self) !void {
+            for (self.components) |c| {
+                self.alloc.free(c);
+            }
+            self.alloc.free(self.components);
+            self.alloc.free(self.dag_nodes);
+        }
+    };
+
+    // User should call deinit on the result
+    // https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm
+    pub fn strongly_connected_components_alloc(self: Self, alloc: std.mem.allocator) !Componentization {
+        // Whether we've visited a given node yet while constructing the post-order
+        var visited = try alloc.alloc(bool, self.nodes.len);
+        defer alloc.free(visited);
+        std.mem.set(bool, visited, false);
+
+        // We're supposed to prepend, but instead we'll append and then iterate in reverse.
+        var reverse_post_order = std.ArrayList(usize).initCapacity(self.nodes.len);
+
+        // Mark a node visited when we first see it, then add to the post-order once we've
+        // visited all children
+        var stack = std.ArrayList(usize).init(alloc);
+        var i: usize = 0;
+        // Since there are likely to be parts of the graph that are completely unconnected
+        // to each other, we do have to check every node at the top level
+        while (i < self.nodes.len): (i += 1) {
+            // Whenever we find a new unvisited "root", we visit all its out-neighbors recursively
+            if (!visited[i]) {
+                stack.append(i);
+                while (stack.items.len > 0) {
+                    var n = stack.items[stack.items.len-1];
+
+                    visited[n] = true;
+
+                }
+                visited[i] = true;
+                stack.appendSlice(self.out_neighbors(self.nodes[i]));
+            }
+        }
+    }
+
+    pub fn strongly_connected_components(self: Self) !Componentization {
+        return self.strongly_connected_components_alloc(self.alloc);
+    }
 };
 
 pub fn main() anyerror!void {
