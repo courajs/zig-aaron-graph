@@ -101,18 +101,21 @@ const Graph = struct {
         }
     };
 
-    // User should call deinit on the result
-    // https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm
+    pub fn post_order(self: Self) !std.ArrayList(usize) {
+        return self.post_order_alloc(self.alloc);
+    }
+
+    // Returns a post-order traversal using node 0 as the root
+    // Caller owns the returned list
     // https://eli.thegreenplace.net/2015/directed-graph-traversal-orderings-and-applications-to-data-flow-analysis/
-    pub fn strongly_connected_components_alloc(self: Self, alloc: std.mem.Allocator) !Componentization {
+    // https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm
+    pub fn post_order_alloc(self: Self, alloc: std.mem.Allocator) !std.ArrayList(usize) {
         // Whether we've visited a given node yet while constructing the post-order
         var visited = try alloc.alloc(bool, self.nodes.len);
         defer alloc.free(visited);
         std.mem.set(bool, visited, false);
 
-        // We're supposed to prepend, but instead we'll append and then iterate in reverse.
-        var reverse_post_order = try std.ArrayList(usize).initCapacity(alloc, self.nodes.len);
-        defer reverse_post_order.deinit();
+        var result = try std.ArrayList(usize).initCapacity(alloc, self.nodes.len);
 
         const DFSFrame = struct {
             node: usize,
@@ -123,7 +126,7 @@ const Graph = struct {
         var stack = std.ArrayList(DFSFrame).init(alloc);
         defer stack.deinit();
         var i: usize = 0;
-        // Since there are likely to be parts of the graph that are completely unconnected
+        // Since there can be parts of the graph that are completely unconnected
         // to each other, we do have to check every node at the top level
         while (i < self.nodes.len) : (i += 1) {
             // Whenever we find a new unvisited "root", we visit all its out-neighbors recursively
@@ -151,15 +154,30 @@ const Graph = struct {
                 } else {
                     // else means we've iterated off the end without breaking - this means all out-neighbors have
                     // been visited. It's time to add this node to the post-order, and step back up the stack.
-                    try reverse_post_order.append(here.node);
+                    try result.append(here.node);
                     _ = stack.pop();
                 }
             }
             // We've finished recursively visiting everything reachable from this root.
             // Continue searching for an unvisited root
         }
-        // We've now visited each node, and the post-order list is fully populated.
-        std.log.err("Graph's reverse post-order: {any}", .{reverse_post_order.items});
+        // We've now visited each node, and the post-order list is fully populated!
+
+        // Owned slice shenanigans in order to free unused capacity. Would be nice if
+        // there was just a standard method for this. We could of course just return the
+        // slice, but since the caller will have to free it using the proper allocator,
+        // I prefer to just hand them the ArrayList with the bundled allocator so they
+        // can just call .deinit() to free.
+        return std.ArrayList(usize).fromOwnedSlice(alloc, result.toOwnedSlice());
+    }
+
+    // User should call deinit on the result
+    // https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm
+    pub fn strongly_connected_components_alloc(self: Self, alloc: std.mem.Allocator) !Componentization {
+        var po = try self.post_order();
+        defer po.deinit();
+
+        std.log.err("Graph's reverse post-order: {any}", .{po.items});
 
         return Componentization{
             .components = &[_][]const usize{},
