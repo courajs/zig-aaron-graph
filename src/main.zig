@@ -118,6 +118,7 @@ const Graph = struct {
         defer trans.deinit();
 
         var roots = try alloc.alloc(?usize, self.nodes.len);
+        defer alloc.free(roots);
         for (roots) |*r| {
             r.* = null;
         }
@@ -167,8 +168,6 @@ const Graph = struct {
             try entry.value_ptr.append(entry.key_ptr.*);
             try result_components.append(entry.value_ptr.toOwnedSlice());
         }
-
-        std.log.err("component_roots: {any}", .{roots});
 
         return Componentization{
             .components = result_components.toOwnedSlice(),
@@ -260,137 +259,123 @@ pub fn main() anyerror!void {
     std.log.info("Its transpose is: {any}", .{g.transpose()});
 }
 
-test "Kosaraju algo for SCCs" {
+fn expectEqualSorted(comptime T: type, left: []const T, right: []const T) !void {
     const t = std.testing;
-    const alloc = t.allocator;
+    const sort = std.sort;
+    const lt = comptime sort.asc(T);
 
-    //     0   ->   3  ->  4
-    //  ↗️   ↘️
-    // 2  <-  1
-    var g = try Graph.create(&[_][]const usize{
-        &[_]usize{ 2, 3 },
-        &[_]usize{0},
-        &[_]usize{1},
-        &[_]usize{4},
-        &[_]usize{},
-    }, alloc);
-    defer g.deinit();
-    var scc = try g.strongly_connected_components();
-    defer scc.deinit();
+    var left_s = try t.allocator.dupe(T, left);
+    var right_s = try t.allocator.dupe(T, right);
+    defer t.allocator.free(left_s);
+    defer t.allocator.free(right_s);
+    sort.sort(T, left_s, {}, lt);
+    sort.sort(T, right_s, {}, lt);
 
-    try t.expectEqual(scc.components.len, 1);
-    std.log.err("scc: {any}", .{scc});
-    try t.expectEqualSlices(usize, scc.components[0], &[_]usize{ 0, 1, 2 });
-
-    // 0 -> 1 -> 2 -> 3
-    g.deinit();
-    scc.deinit();
-    g = try Graph.create(&[_][]const usize{
-        &[_]usize{1},
-        &[_]usize{2},
-        &[_]usize{3},
-        &[_]usize{},
-    }, alloc);
-    scc = try g.strongly_connected_components();
-
-    try t.expectEqual(scc.components.len, 0);
+    return t.expectEqualSlices(T, left_s, right_s);
 }
 
 // Test cases from:
 // https://www.geeksforgeeks.org/tarjan-algorithm-find-strongly-connected-components/
-//
-//
-//
-//
-//    let g1 = new Graph(5);
-//
-//    g1.addEdge(1, 0);
-//    g1.addEdge(0, 2);
-//    g1.addEdge(2, 1);
-//    g1.addEdge(0, 3);
-//    g1.addEdge(3, 4);
-//    document.write("SSC in first graph <br>");
-//    g1.SCC();
-//
-//    let g2 = new Graph(4);
-//    g2.addEdge(0, 1);
-//    g2.addEdge(1, 2);
-//    g2.addEdge(2, 3);
-//    document.write("\nSSC in second graph<br> ");
-//    g2.SCC();
-//
-//    let g3 = new Graph(7);
-//    g3.addEdge(0, 1);
-//    g3.addEdge(1, 2);
-//    g3.addEdge(2, 0);
-//    g3.addEdge(1, 3);
-//    g3.addEdge(1, 4);
-//    g3.addEdge(1, 6);
-//    g3.addEdge(3, 5);
-//    g3.addEdge(4, 5);
-//    document.write("\nSSC in third graph <br>");
-//    g3.SCC();
-//
-//    let g4 = new Graph(11);
-//    g4.addEdge(0, 1);
-//    g4.addEdge(0, 3);
-//    g4.addEdge(1, 2);
-//    g4.addEdge(1, 4);
-//    g4.addEdge(2, 0);
-//    g4.addEdge(2, 6);
-//    g4.addEdge(3, 2);
-//    g4.addEdge(4, 5);
-//    g4.addEdge(4, 6);
-//    g4.addEdge(5, 6);
-//    g4.addEdge(5, 7);
-//    g4.addEdge(5, 8);
-//    g4.addEdge(5, 9);
-//    g4.addEdge(6, 4);
-//    g4.addEdge(7, 9);
-//    g4.addEdge(8, 9);
-//    g4.addEdge(9, 8);
-//    document.write("\nSSC in fourth graph<br> ");
-//    g4.SCC();
-//
-//    let g5 = new Graph (5);
-//    g5.addEdge(0, 1);
-//    g5.addEdge(1, 2);
-//    g5.addEdge(2, 3);
-//    g5.addEdge(2, 4);
-//    g5.addEdge(3, 0);
-//    g5.addEdge(4, 2);
-//    document.write("\nSSC in fifth graph <br>");
-//    g5.SCC();
-//
-//    // This code is contributed by avanitrachhadiya2155
-//
-//    </script>
-//    Output:
-//
-//    SCCs in first graph
-//    4
-//    3
-//    1 2 0
-//
-//    SCCs in second graph
-//    3
-//    2
-//    1
-//    0
-//
-//    SCCs in third graph
-//    5
-//    3
-//    4
-//    6
-//    2 1 0
-//
-//    SCCs in fourth graph
-//    8 9
-//    7
-//    5 4 6
-//    3 2 1 0
-//    10
-//
-//    SCCs in fifth graph
-//    4 3 2 1 0
+test "Kosaraju algo for SCCs" {
+    const t = std.testing;
+    const alloc = t.allocator;
+
+    {
+        //     0   ->   3  ->  4
+        //  ↗️   ↘️
+        // 2  <-  1
+        var g = try Graph.create(&[_][]const usize{
+            &[_]usize{ 2, 3 },
+            &[_]usize{0},
+            &[_]usize{1},
+            &[_]usize{4},
+            &[_]usize{},
+        }, alloc);
+        defer g.deinit();
+        var scc = try g.strongly_connected_components();
+        defer scc.deinit();
+
+        try t.expectEqual(scc.components.len, 1);
+        try expectEqualSorted(usize, scc.components[0], &[_]usize{ 0, 1, 2 });
+    }
+
+    {
+        // 0 -> 1 -> 2 -> 3
+        var g = try Graph.create(&[_][]const usize{
+            &[_]usize{1},
+            &[_]usize{2},
+            &[_]usize{3},
+            &[_]usize{},
+        }, alloc);
+        var scc = try g.strongly_connected_components();
+        defer g.deinit();
+        defer scc.deinit();
+
+        try t.expectEqual(scc.components.len, 0);
+    }
+
+    {
+        //     0
+        //  ↗️   ↘️
+        // 2   <-  1  ->   6
+        //     (dl)  ↘️
+        //    3        4
+        //      ↘️  (dl)
+        //        5
+        var g = try Graph.create(&[_][]const usize{
+            &[_]usize{1},
+            &[_]usize{ 2, 3, 4, 6 },
+            &[_]usize{0},
+            &[_]usize{5},
+            &[_]usize{5},
+            &[_]usize{},
+            &[_]usize{},
+        }, alloc);
+        var scc = try g.strongly_connected_components();
+        defer g.deinit();
+        defer scc.deinit();
+
+        try t.expectEqual(scc.components.len, 1);
+        try expectEqualSorted(usize, scc.components[0], &[_]usize{ 0, 1, 2 });
+    }
+
+    {
+        var g = try Graph.create(&[_][]const usize{
+            &[_]usize{ 1, 3 },
+            &[_]usize{ 2, 4 },
+            &[_]usize{ 0, 6 },
+            &[_]usize{2},
+            &[_]usize{ 5, 6 },
+            &[_]usize{ 6, 7, 8, 9 },
+            &[_]usize{4},
+            &[_]usize{9},
+            &[_]usize{9},
+            &[_]usize{8},
+            &[_]usize{},
+        }, alloc);
+        var scc = try g.strongly_connected_components();
+        defer g.deinit();
+        defer scc.deinit();
+
+        try t.expectEqual(scc.components.len, 3);
+        try expectEqualSorted(usize, scc.components[0], &[_]usize{ 8, 9 });
+        try expectEqualSorted(usize, scc.components[1], &[_]usize{ 4, 5, 6 });
+        try expectEqualSorted(usize, scc.components[2], &[_]usize{ 0, 1, 2, 3 });
+    }
+
+    {
+        var g = try Graph.create(&[_][]const usize{
+            &[_]usize{1},
+            &[_]usize{2},
+            &[_]usize{ 3, 4 },
+            &[_]usize{0},
+            &[_]usize{2},
+        }, alloc);
+        var scc = try g.strongly_connected_components();
+        defer g.deinit();
+        defer scc.deinit();
+
+        try t.expectEqual(scc.components.len, 1);
+        try expectEqualSorted(usize, scc.components[0], &[_]usize{ 0, 1, 2, 3, 4 });
+    }
+}
