@@ -241,10 +241,80 @@ const Graph = struct {
         return result.toOwnedSlice();
     }
 
+    // TODO: memory state (regarding component slices) in error cases???
     pub fn condense(self: Self) !Condensation {
+        var components = (try self.strongly_connected_components()).components;
+        // original node id -> index in components list
+        var new_node_id_map = try self.alloc.alloc(?usize, self.nodes.len);
+        std.mem.set(?usize, new_node_id_map, null);
+        defer self.alloc.free(new_node_id_map);
+
+        var new_node_data = std.ArrayList(Condensation.Node).init(self.alloc);
+
+        for (components) |original_node_ids| {
+            var new_node_id = new_node_data.items.len;
+            // here is where we take ownership of each component slice from the Componentization
+            try new_node_data.append(Condensation.Node{ .component = original_node_ids });
+            for (original_node_ids) |original_node_id| {
+                new_node_id_map[original_node_id] = new_node_id;
+            }
+        }
+        // we took ownership of the individual slices from the componentization.
+        // The top-level slice is left over and needs to be freed
+        // todo: maybe this should be done in a defer or errdefer or something?
+        self.alloc.free(components);
+
+        // add all trivial dag_nodes to new_node_data
+        for (self.nodes) |_, original_node_id| {
+            var new_node_id = new_node_data.items.len;
+            if (new_node_id_map[original_node_id] == null) {
+                try new_node_data.append(Condensation.Node{ .dag_node = original_node_id });
+                new_node_id_map[original_node_id] = new_node_id;
+            }
+        }
+
+        var new_graph_nodes = std.ArrayList(Graph.Node).init(self.alloc);
+        var new_graph_edges = std.ArrayList(usize).init(self.alloc);
+
+        var working_merged_edge_set = std.AutoHashMap(usize, void).init(self.alloc);
+        defer working_merged_edge_set.deinit();
+
+        for (new_node_data.items) |condensed_node| {
+            switch (condensed_node) {
+                .dag_node => |orig_idx| {
+                    var start = new_graph_edges.items.len;
+                    for (self.out_neighbors(orig_idx)) |target| {
+                        try new_graph_edges.append(new_node_id_map[target].?);
+                    }
+                    try new_graph_nodes.append(Node{
+                        .start = start,
+                        .len = self.nodes[orig_idx].len,
+                    });
+                },
+                .component => |orig_ids| {
+                    working_merged_edge_set.clearRetainingCapacity();
+                    for (orig_ids) |orig_idx| {
+                        for (self.out_neighbors(orig_idx)) |target| {
+                            try working_merged_edge_set.put(new_node_id_map[target].?, {});
+                        }
+                    }
+                    var start = new_graph_edges.items.len;
+                    var iter = working_merged_edge_set.keyIterator();
+                    while (iter.next()) |target| {
+                        try new_graph_edges.append(target.*);
+                    }
+                    try new_graph_nodes.append(Graph.Node{ .start = start, .len = working_merged_edge_set.count() });
+                },
+            }
+        }
+
         return Condensation{
-            .graph = try Graph.create(&[_][]const usize{}, self.alloc),
-            .node_data = &[_]Condensation.Node{},
+            .graph = Graph{
+                .nodes = new_graph_nodes.toOwnedSlice(),
+                .edges = new_graph_edges.toOwnedSlice(),
+                .alloc = self.alloc,
+            },
+            .node_data = new_node_data.toOwnedSlice(),
             .alloc = self.alloc,
         };
     }
