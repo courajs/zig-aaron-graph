@@ -240,23 +240,61 @@ const Graph = struct {
 
         return result.toOwnedSlice();
     }
+
+    pub fn condense(self: Self) !Condensation {
+        return Condensation{
+            .graph = try Graph.create(&[_][]const usize{}, self.alloc),
+            .node_data = &[_]Condensation.Node{},
+            .alloc = self.alloc,
+        };
+    }
 };
 
-pub fn main() anyerror!void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
-    var alloc = arena.allocator();
+pub const Condensation = struct {
+    graph: Graph,
+    node_data: []const Node,
+    alloc: std.mem.Allocator,
+
+    const Self = @This();
+    pub const Node = union(enum) {
+        dag_node: usize,
+        component: []const usize,
+
+        pub fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+            alloc.free(self.component);
+        }
+    };
+
+    // only deinits self, not the graph
+    pub fn deinit(self: *Self) void {
+        self.alloc.free(self.node_data);
+    }
+};
+
+test "Graph condensation" {
+    const t = std.testing;
+    const alloc = t.allocator;
 
     var g = try Graph.create(&[_][]const usize{
         &[_]usize{1},
-        &[_]usize{2},
-        &[_]usize{1},
+        &[_]usize{ 2, 4 },
+        &[_]usize{3},
+        &[_]usize{0},
+        &[_]usize{5},
+        &[_]usize{6},
+        &[_]usize{7},
+        &[_]usize{8},
+        &[_]usize{5},
     }, alloc);
-    std.log.info("I made this graph: {any}", .{g});
+    defer g.deinit();
 
-    std.log.info("It's post-order is: {any}", .{g.post_order()});
+    var condensate = try g.condense();
+    defer condensate.deinit();
 
-    std.log.info("Its transpose is: {any}", .{g.transpose()});
+    try t.expectEqual(condensate.node_data.len, 3);
+    try t.expectEqual(condensate.node_data[0].component, &[_]usize{ 0, 1, 2, 3 });
+    try t.expectEqual(condensate.node_data[1].dag_node, 4);
+    try t.expectEqual(condensate.node_data[2].component, &[_]usize{ 5, 6, 7, 8 });
 }
 
 fn expectEqualSorted(comptime T: type, left: []const T, right: []const T) !void {
