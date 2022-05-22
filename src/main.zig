@@ -335,9 +335,14 @@ pub const Condensation = struct {
         }
     };
 
-    // only deinits self, not the graph
     pub fn deinit(self: *Self) void {
+        for (self.node_data) |node| {
+            if (node == .component) {
+                self.alloc.free(node.component);
+            }
+        }
         self.alloc.free(self.node_data);
+        self.graph.deinit();
     }
 };
 
@@ -362,9 +367,9 @@ test "Graph condensation" {
     defer condensate.deinit();
 
     try t.expectEqual(condensate.node_data.len, 3);
-    try t.expectEqual(condensate.node_data[0].component, &[_]usize{ 0, 1, 2, 3 });
-    try t.expectEqual(condensate.node_data[1].dag_node, 4);
-    try t.expectEqual(condensate.node_data[2].component, &[_]usize{ 5, 6, 7, 8 });
+    try t.expectEqualSlices(usize, condensate.node_data[0].component, &[_]usize{ 6, 7, 8, 5 });
+    try t.expectEqualSlices(usize, condensate.node_data[1].component, &[_]usize{ 1, 2, 3, 0 });
+    try t.expectEqual(condensate.node_data[2].dag_node, 4);
 }
 
 fn expectEqualSorted(comptime T: type, left: []const T, right: []const T) !void {
