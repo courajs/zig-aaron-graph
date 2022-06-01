@@ -231,24 +231,37 @@ pub fn kosaraju_strong_components(self: Graph, alloc: std.mem.Allocator) !Compon
     };
 }
 
+// A directed acyclic graph made by condensing any strong components
+// in a source possibly-cyclic graph into a single node.
 pub const Condensation = struct {
+    // The condensed graph, where each node represents either
+    // an original node or a strong component of original nodes
     graph: Graph,
-    node_data: std.ArrayList(ComponentInfo),
+    // information about what each dag node corresponds to
+    node_data: []const ComponentInfo,
+    // mapping from original node index to corresponding
+    // dag node
+    mapping: []const usize,
+
+    alloc: std.mem.Allocator,
 
     const Self = @This();
     pub const ComponentInfo = union(enum) {
         dag_node: usize,
-        component: std.ArrayList(usize),
+        component: []const usize,
+
+        pub fn deinit(self: @This(), alloc: std.mem.Allocator) void {
+            if (self == .component) {
+                alloc.free(self.component);
+            }
+        }
     };
 
     pub fn deinit(self: *Self) void {
-        for (self.node_data.items) |node| {
-            if (node == .component) {
-                node.component.deinit();
-            }
-        }
-        self.node_data.deinit();
         self.graph.deinit();
+        self.alloc.free(self.mapping);
+        for (self.node_data) |node| node.deinit(self.alloc);
+        self.alloc.free(self.node_data);
     }
 };
 
@@ -263,7 +276,10 @@ pub fn condense_graph(self: Graph, alloc: std.mem.Allocator) !Condensation {
     // a given component?
     // Will be owned by the returned Condensation
     var new_node_data = std.ArrayList(Condensation.ComponentInfo).init(alloc);
-    errdefer new_node_data.deinit();
+    errdefer {
+        for (new_node_data.items) |dat| dat.deinit(alloc);
+        new_node_data.deinit();
+    }
 
     // Each individual component list becomes owned by the returned Condensation,
     // but we do need to free the top-level list containing them.
@@ -271,13 +287,13 @@ pub fn condense_graph(self: Graph, alloc: std.mem.Allocator) !Condensation {
     errdefer scc.deinit();
     defer scc.components.deinit();
 
-    for (scc.components.items) |original_node_ids| {
+    for (scc.components.items) |*original_node_ids| {
         var new_node_id = new_node_data.items.len;
-        // here is where we take ownership of each component slice from the Componentization
-        try new_node_data.append(Condensation.ComponentInfo{ .component = original_node_ids });
         for (original_node_ids.items) |original_node_id| {
             new_node_id_map[original_node_id] = new_node_id;
         }
+        // here is where we take ownership of each component slice from the Componentization
+        try new_node_data.append(Condensation.ComponentInfo{ .component = original_node_ids.toOwnedSlice() });
     }
 
     // add all trivial dag_nodes to new_node_data
@@ -311,7 +327,7 @@ pub fn condense_graph(self: Graph, alloc: std.mem.Allocator) !Condensation {
             },
             .component => |orig_ids| {
                 working_merged_edge_set.clearRetainingCapacity();
-                for (orig_ids.items) |orig_idx| {
+                for (orig_ids) |orig_idx| {
                     for (self.out_neighbors(orig_idx)) |target| {
                         try working_merged_edge_set.put(new_node_id_map[target].?, {});
                     }
@@ -326,13 +342,21 @@ pub fn condense_graph(self: Graph, alloc: std.mem.Allocator) !Condensation {
         }
     }
 
+    var mapping = try alloc.alloc(usize, new_node_id_map.len);
+    errdefer alloc.free(mapping);
+    for (new_node_id_map) |node, i| {
+        mapping[i] = node.?;
+    }
+
     return Condensation{
         .graph = Graph{
             .nodes = new_graph_nodes.toOwnedSlice(),
             .edges = new_graph_edges.toOwnedSlice(),
             .alloc = self.alloc,
         },
-        .node_data = new_node_data,
+        .node_data = new_node_data.toOwnedSlice(),
+        .mapping = mapping,
+        .alloc = alloc,
     };
 }
 
