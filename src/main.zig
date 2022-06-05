@@ -263,6 +263,16 @@ pub const Condensation = struct {
         for (self.node_data) |node| node.deinit(self.alloc);
         self.alloc.free(self.node_data);
     }
+
+    pub fn count_components(self: Self) usize {
+        var count: usize = 0;
+        for (self.node_data) |info| {
+            if (info == .component) {
+                count += 1;
+            }
+        }
+        return count;
+    }
 };
 
 // TODO: memory state (regarding component slices) in error cases???
