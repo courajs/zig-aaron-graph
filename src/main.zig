@@ -390,10 +390,10 @@ test "Graph condensation" {
     var condensate = try condense_graph(g, alloc);
     defer condensate.deinit();
 
-    try t.expectEqual(condensate.node_data.items.len, 3);
-    try t.expectEqualSlices(usize, condensate.node_data.items[0].component.items, &[_]usize{ 6, 7, 8, 5 });
-    try t.expectEqualSlices(usize, condensate.node_data.items[1].component.items, &[_]usize{ 1, 2, 3, 0 });
-    try t.expectEqual(condensate.node_data.items[2].dag_node, 4);
+    try t.expectEqual(condensate.node_data.len, 3);
+    try t.expectEqualSlices(usize, condensate.node_data[0].component, &[_]usize{ 6, 7, 8, 5 });
+    try t.expectEqualSlices(usize, condensate.node_data[1].component, &[_]usize{ 1, 2, 3, 0 });
+    try t.expectEqual(condensate.node_data[2].dag_node, 4);
 }
 
 fn expectEqualSorted(comptime T: type, left: []const T, right: []const T) !void {
