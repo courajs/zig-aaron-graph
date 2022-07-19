@@ -14,7 +14,7 @@ pub const Graph = struct {
     pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
-        return writer.print("{s}{{ .nodes = {{{any}}}, .edges = {{{any}}} ... }}", .{ @typeName(Self), value.nodes, value.edges });
+        return writer.print("{s}{{ .nodes = {any}, .edges = {any} }}", .{ @typeName(Self), value.nodes, value.edges });
     }
 
     pub fn create(def: []const []const usize, alloc: std.mem.Allocator) !Self {
