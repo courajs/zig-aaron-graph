@@ -165,6 +165,48 @@ pub const Componentization = struct {
     }
 };
 
+const HashSet = std.AutoHashMap(usize, void);
+
+pub fn connected_components(self: Graph, alloc: std.mem.Allocator) !Componentization {
+    var set = HashSet.init(alloc);
+    defer set.deinit();
+    return _connected_components(self, alloc, &set);
+}
+pub fn _connected_components(self: Graph, alloc: std.mem.Allocator, seen: *HashSet) !Componentization {
+    _ = self;
+    _ = alloc;
+    try seen.ensureTotalCapacity(@intCast(HashSet.Size, self.nodes.len));
+    seen.clearRetainingCapacity();
+
+    // loop over every node.
+    // If in seen, skip
+    // If not in seen, do a dfs. All nodes touched are a component. Add each of them to seen
+
+    return Componentization{
+        .components = std.ArrayList(std.ArrayList(usize)).init(alloc),
+    };
+}
+
+test "Connected (not strong) components of a graph" {
+    const t = std.testing;
+    const alloc = t.allocator;
+
+    var g = try Graph.create(&[_][]const usize{
+        &[_]usize{ 3, 4 },
+        &[_]usize{},
+        &[_]usize{4},
+        &[_]usize{2},
+        &[_]usize{},
+    }, alloc);
+    defer g.deinit();
+
+    var components = try connected_components(g, alloc);
+    defer components.deinit();
+
+    try t.expectEqualSlices(usize, components.components.items[0].items, &[_]usize{ 0, 3, 4, 2 });
+    try t.expectEqualSlices(usize, components.components.items[1].items, &[_]usize{1});
+}
+
 // https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm
 pub fn kosaraju_strong_components(self: Graph, alloc: std.mem.Allocator) !Componentization {
     var postorder = try post_order(self, alloc);
