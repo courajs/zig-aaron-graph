@@ -178,17 +178,6 @@ pub fn _connected_components(self: Graph, alloc: std.mem.Allocator, seen: *HashS
     try seen.ensureTotalCapacity(@intCast(HashSet.Size, self.nodes.len));
     seen.clearRetainingCapacity();
 
-    var roots = HashSet
-    var todo = std.ArrayList(usize).init(alloc);
-    var i: usize = 0;
-    while (i<self.nodes.len): (i += 1) {
-        if (seen.has(i)) {
-            continue;
-        }
-
-
-    }
-
     // loop over every node.
     // If in seen, skip
     // If not in seen, do a dfs. All nodes touched are a component. Add each of them to seen
