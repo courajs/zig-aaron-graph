@@ -20,13 +20,15 @@ pub const Graph = struct {
     pub fn create(def: []const []const usize, alloc: std.mem.Allocator) !Self {
         var nodes = std.ArrayList(Node).init(alloc);
         var edges = std.ArrayList(usize).init(alloc);
+        defer nodes.deinit();
+        defer edges.deinit();
         for (def) |these_edges| {
             try nodes.append(Node{ .start = edges.items.len, .len = these_edges.len });
             try edges.appendSlice(these_edges);
         }
         return Self{
-            .nodes = nodes.toOwnedSlice(),
-            .edges = edges.toOwnedSlice(),
+            .nodes = try nodes.toOwnedSlice(),
+            .edges = try edges.toOwnedSlice(),
             .alloc = alloc,
         };
     }
@@ -58,7 +60,7 @@ fn edge_lt_from(_: void, lhs: DirectedEdge, rhs: DirectedEdge) bool {
 pub fn transpose(self: Graph, alloc: std.mem.Allocator) !Graph {
     var reversed_edges = try std.ArrayList(DirectedEdge).initCapacity(alloc, self.edges.len);
     defer reversed_edges.deinit();
-    for (self.nodes) |n, from| {
+    for (self.nodes, 0..) |n, from| {
         for (self.out_neighbors_node(n)) |to| {
             // Insert the edge already reversed
             reversed_edges.appendAssumeCapacity(DirectedEdge{ .from = to, .to = from });
@@ -66,14 +68,16 @@ pub fn transpose(self: Graph, alloc: std.mem.Allocator) !Graph {
     }
     // Sorting groups the edges contiguously by "parent", so we can easily form the
     // node and edge lists
-    std.sort.sort(DirectedEdge, reversed_edges.items, {}, edge_lt_from);
+    std.sort.insertion(DirectedEdge, reversed_edges.items, {}, edge_lt_from);
 
     var edges = try alloc.alloc(usize, self.edges.len);
+    errdefer alloc.free(edges);
     var nodes = try std.ArrayList(Graph.Node).initCapacity(alloc, self.nodes.len);
+    defer nodes.deinit();
 
     var current_from: usize = 0;
     var current_node = Graph.Node{ .start = 0, .len = 0 };
-    for (reversed_edges.items) |edge, idx| {
+    for (reversed_edges.items, 0..) |edge, idx| {
         edges[idx] = edge.to;
         if (edge.from == current_from) {
             current_node.len += 1;
@@ -91,7 +95,7 @@ pub fn transpose(self: Graph, alloc: std.mem.Allocator) !Graph {
         nodes.appendAssumeCapacity(Graph.Node{ .start = self.nodes.len, .len = 0 });
     }
 
-    return Graph{ .nodes = nodes.toOwnedSlice(), .edges = edges, .alloc = alloc };
+    return Graph{ .nodes = try nodes.toOwnedSlice(), .edges = edges, .alloc = alloc };
 }
 
 // Returns a post-order traversal using node 0 as the root
@@ -101,7 +105,7 @@ pub fn post_order(self: Graph, alloc: std.mem.Allocator) !std.ArrayList(usize) {
     // Whether we've visited a given node yet while constructing the post-order
     var visited = try alloc.alloc(bool, self.nodes.len);
     defer alloc.free(visited);
-    std.mem.set(bool, visited, false);
+    @memset(visited, false);
 
     var result = try std.ArrayList(usize).initCapacity(alloc, self.nodes.len);
 
@@ -128,7 +132,7 @@ pub fn post_order(self: Graph, alloc: std.mem.Allocator) !std.ArrayList(usize) {
         while (stack.items.len > 0) {
             var here = &stack.items[stack.items.len - 1];
             // Check remaining out-neighbors of the current stack item.
-            for (self.out_neighbors(here.node)[here.next_out_index..]) |out, inc| {
+            for (self.out_neighbors(here.node)[here.next_out_index..], 0..) |out, inc| {
                 // this out-neighbor has been visited already via some other path
                 if (visited[out]) {
                     continue;
@@ -217,7 +221,7 @@ pub fn kosaraju_strong_components(self: Graph, alloc: std.mem.Allocator) !Compon
 
     var roots = try alloc.alloc(?usize, self.nodes.len);
     defer alloc.free(roots);
-    std.mem.set(?usize, roots, null);
+    @memset(roots, null);
 
     const AssignFrame = struct {
         node: usize,
@@ -251,7 +255,7 @@ pub fn kosaraju_strong_components(self: Graph, alloc: std.mem.Allocator) !Compon
 
     var components = std.AutoHashMap(usize, std.ArrayList(usize)).init(alloc);
     defer components.deinit();
-    for (roots) |r, i| {
+    for (roots, 0..) |r, i| {
         if (r.? != i) {
             var entry = try components.getOrPutValue(r.?, std.ArrayList(usize).init(alloc));
             try entry.value_ptr.append(i);
@@ -321,7 +325,7 @@ pub const Condensation = struct {
 pub fn condense_graph(self: Graph, alloc: std.mem.Allocator) !Condensation {
     // map from original graph node id -> corresponding condensed node id
     var new_node_id_map = try alloc.alloc(?usize, self.nodes.len);
-    std.mem.set(?usize, new_node_id_map, null);
+    @memset(new_node_id_map, null);
     defer alloc.free(new_node_id_map);
 
     // Information about nodes of the condensed graph. Which original nodes are in
@@ -345,11 +349,11 @@ pub fn condense_graph(self: Graph, alloc: std.mem.Allocator) !Condensation {
             new_node_id_map[original_node_id] = new_node_id;
         }
         // here is where we take ownership of each component slice from the Componentization
-        try new_node_data.append(Condensation.ComponentInfo{ .component = original_node_ids.toOwnedSlice() });
+        try new_node_data.append(Condensation.ComponentInfo{ .component = try original_node_ids.toOwnedSlice() });
     }
 
     // add all trivial dag_nodes to new_node_data
-    for (self.nodes) |_, original_node_id| {
+    for (self.nodes, 0..) |_, original_node_id| {
         var new_node_id = new_node_data.items.len;
         if (new_node_id_map[original_node_id] == null) {
             try new_node_data.append(Condensation.ComponentInfo{ .dag_node = original_node_id });
@@ -396,17 +400,17 @@ pub fn condense_graph(self: Graph, alloc: std.mem.Allocator) !Condensation {
 
     var mapping = try alloc.alloc(usize, new_node_id_map.len);
     errdefer alloc.free(mapping);
-    for (new_node_id_map) |node, i| {
+    for (new_node_id_map, 0..) |node, i| {
         mapping[i] = node.?;
     }
 
     return Condensation{
         .graph = Graph{
-            .nodes = new_graph_nodes.toOwnedSlice(),
-            .edges = new_graph_edges.toOwnedSlice(),
+            .nodes = try new_graph_nodes.toOwnedSlice(),
+            .edges = try new_graph_edges.toOwnedSlice(),
             .alloc = self.alloc,
         },
-        .node_data = new_node_data.toOwnedSlice(),
+        .node_data = try new_node_data.toOwnedSlice(),
         .mapping = mapping,
         .alloc = alloc,
     };
@@ -433,8 +437,8 @@ test "Graph condensation" {
     defer condensate.deinit();
 
     try t.expectEqual(condensate.node_data.len, 3);
-    try t.expectEqualSlices(usize, condensate.node_data[0].component, &[_]usize{ 6, 7, 8, 5 });
-    try t.expectEqualSlices(usize, condensate.node_data[1].component, &[_]usize{ 1, 2, 3, 0 });
+    try t.expectEqualSlices(usize, condensate.node_data[0].component, &[_]usize{ 1, 2, 3, 0 });
+    try t.expectEqualSlices(usize, condensate.node_data[1].component, &[_]usize{ 6, 7, 8, 5 });
     try t.expectEqual(condensate.node_data[2].dag_node, 4);
 }
 
@@ -447,8 +451,8 @@ fn expectEqualSorted(comptime T: type, left: []const T, right: []const T) !void 
     var right_s = try t.allocator.dupe(T, right);
     defer t.allocator.free(left_s);
     defer t.allocator.free(right_s);
-    sort.sort(T, left_s, {}, lt);
-    sort.sort(T, right_s, {}, lt);
+    sort.heap(T, left_s, {}, lt);
+    sort.heap(T, right_s, {}, lt);
 
     return t.expectEqualSlices(T, left_s, right_s);
 }
@@ -537,9 +541,9 @@ test "Kosaraju algo for SCCs" {
         defer scc.deinit();
 
         try t.expectEqual(scc.components.items.len, 3);
-        try expectEqualSorted(usize, scc.components.items[0].items, &[_]usize{ 8, 9 });
-        try expectEqualSorted(usize, scc.components.items[1].items, &[_]usize{ 4, 5, 6 });
-        try expectEqualSorted(usize, scc.components.items[2].items, &[_]usize{ 0, 1, 2, 3 });
+        try expectEqualSorted(usize, scc.components.items[0].items, &[_]usize{ 0, 1, 2, 3 });
+        try expectEqualSorted(usize, scc.components.items[1].items, &[_]usize{ 8, 9 });
+        try expectEqualSorted(usize, scc.components.items[2].items, &[_]usize{ 4, 5, 6 });
     }
 
     {
