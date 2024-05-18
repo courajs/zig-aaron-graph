@@ -233,7 +233,7 @@ pub fn kosaraju_strong_components(self: Graph, alloc: std.mem.Allocator) !Compon
     // iterate in reverse since this algorithm uses reverse-post-order
     var i_plus = postorder.items.len;
     while (i_plus > 0) : (i_plus -= 1) {
-        var u = postorder.items[i_plus - 1];
+        const u = postorder.items[i_plus - 1];
 
         if (roots[u] != null) {
             continue;
@@ -344,7 +344,7 @@ pub fn condense_graph(self: Graph, alloc: std.mem.Allocator) !Condensation {
     defer scc.components.deinit();
 
     for (scc.components.items) |*original_node_ids| {
-        var new_node_id = new_node_data.items.len;
+        const new_node_id = new_node_data.items.len;
         for (original_node_ids.items) |original_node_id| {
             new_node_id_map[original_node_id] = new_node_id;
         }
@@ -354,7 +354,7 @@ pub fn condense_graph(self: Graph, alloc: std.mem.Allocator) !Condensation {
 
     // add all trivial dag_nodes to new_node_data
     for (self.nodes, 0..) |_, original_node_id| {
-        var new_node_id = new_node_data.items.len;
+        const new_node_id = new_node_data.items.len;
         if (new_node_id_map[original_node_id] == null) {
             try new_node_data.append(Condensation.ComponentInfo{ .dag_node = original_node_id });
             new_node_id_map[original_node_id] = new_node_id;
@@ -372,7 +372,7 @@ pub fn condense_graph(self: Graph, alloc: std.mem.Allocator) !Condensation {
     for (new_node_data.items) |condensed_node| {
         switch (condensed_node) {
             .dag_node => |orig_idx| {
-                var start = new_graph_edges.items.len;
+                const start = new_graph_edges.items.len;
                 for (self.out_neighbors(orig_idx)) |target| {
                     try new_graph_edges.append(new_node_id_map[target].?);
                 }
@@ -388,7 +388,7 @@ pub fn condense_graph(self: Graph, alloc: std.mem.Allocator) !Condensation {
                         try working_merged_edge_set.put(new_node_id_map[target].?, {});
                     }
                 }
-                var start = new_graph_edges.items.len;
+                const start = new_graph_edges.items.len;
                 var iter = working_merged_edge_set.keyIterator();
                 while (iter.next()) |target| {
                     try new_graph_edges.append(target.*);
@@ -447,8 +447,8 @@ fn expectEqualSorted(comptime T: type, left: []const T, right: []const T) !void 
     const sort = std.sort;
     const lt = comptime sort.asc(T);
 
-    var left_s = try t.allocator.dupe(T, left);
-    var right_s = try t.allocator.dupe(T, right);
+    const left_s = try t.allocator.dupe(T, left);
+    const right_s = try t.allocator.dupe(T, right);
     defer t.allocator.free(left_s);
     defer t.allocator.free(right_s);
     sort.heap(T, left_s, {}, lt);
